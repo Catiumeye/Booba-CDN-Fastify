@@ -7,7 +7,9 @@ import path from 'path';
 import contentDisposition from 'content-disposition';
 import mime from 'mime';
 import fs from 'fs';
+import { pipeline } from 'stream/promises'
 import { errorHandler, HttpException } from './src/error-worker';
+import { brotliCompress, createBrotliCompress, createBrotliDecompress } from 'zlib';
 dotenv.config();
 
 const buckets = Object.keys(bucketCfg).join('|');
@@ -19,7 +21,7 @@ app.get<{
         bucket: string;
         file: string;
     }
-}>(`/:bucket(${buckets})/:file(.+)`, function (request, reply) {
+}>(`/:bucket(${buckets})/:file(.+)`, (request, reply) => {
     try {
         const { bucket, file } = request.params;
         const filePath = path.join(process.cwd(), 'static', bucket, file)
@@ -34,18 +36,19 @@ app.get<{
         const stat = fs.statSync(filePath)
         
         const readStream = fs.createReadStream(filePath);
-
+        
         reply.raw.writeHead(200, {
             'Content-Disposition': contentDisposition(file, {type: dispositionType}),
             'Content-Length': stat.size,
             'Content-Type': mime.getType(filePath)
         })
-    
+        
         readStream.on('error', (err) => {
             reply.code(500).send({ error: err })
         })
     
-        readStream.pipe(reply.raw);
+        // readStream.pipe(createBrotliDecompress()).pipe(reply.raw);
+        readStream.pipe(reply.raw)
     } catch (error) {
         reply.status(500).send({ok: false, message: 'General Error'})
     }
@@ -55,7 +58,7 @@ app.post<{
     Params: {
         bucket: string;
     }
-}>(`/:bucket(${buckets})/`, function (request, reply) {
+}>(`/:bucket(${buckets})/`, (request, reply) => {
     try {
         const { bucket } = request.params;
         const bucketPath = path.join(process.cwd(), 'static', bucket)
@@ -69,6 +72,15 @@ app.post<{
     
         let SIZE = 0;
         const wsFile = fs.createWriteStream(path.join(bucketPath, name))
+
+        // request.raw.pipe(createBrotliCompress()).on('data', (chunk) => {
+        //     SIZE += chunk.length;
+        //     if(SIZE/1024/1024 > LIMIT) {
+        //         request.raw.emit('error')
+        //     }
+        //     wsFile.write(chunk);
+        // })
+
         request.raw.on('data', (chunk) => {
             SIZE += chunk.length;
             if(SIZE/1024/1024 > LIMIT) {
